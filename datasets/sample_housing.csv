@@ -1,0 +1,11 @@
+id,square_feet,num_bedrooms,price,city,country,is_active
+1,1200,3,250000,New York,USA,True
+2,1500,3,310000,Los Angeles,USA,True
+3,,4,450000,Chicago,USA,True
+4,850,2,180000,Houston,USA,True
+1,1200,3,250000,New York,USA,True
+6,50000,10,95000000,Miami,USA,True
+7,1100,2,230000,Seattle,USA,True
+8,1400,,300000,Austin,USA,True
+9,1300,3,,Denver,USA,True
+1,1200,3,250000,New York,USA,True
