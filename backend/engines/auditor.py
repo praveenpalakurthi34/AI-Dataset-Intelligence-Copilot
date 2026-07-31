@@ -110,25 +110,63 @@ def detect_type_inconsistencies(df: pd.DataFrame) -> List[QualityIssue]:
 
 def detect_outliers_iqr(df: pd.DataFrame) -> Tuple[List[QualityIssue], int, dict]:
     """
-    Detects statistical outliers on numerical columns using the Interquartile Range (IQR) method.
-    Returns (issues_list, total_outliers_count, outliers_per_column_dict).
+    Detect statistical outliers using the IQR method.
+
+    Identifier columns such as Employee_ID, Customer_ID, UUID, etc.
+    are automatically excluded from analysis.
     """
+
     issues = []
     total_outliers = 0
     outliers_per_col = {}
     total_rows = len(df)
+
     if total_rows == 0:
         return issues, 0, {}
 
-    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    # ------------------------------------------------------------
+    # STEP 1: Detect identifier columns automatically
+    # ------------------------------------------------------------
+
+    identifier_keywords = [
+        "id",
+        "_id",
+        "uuid",
+        "guid",
+        "serial",
+        "index",
+        "code"
+    ]
+
+    identifier_cols = [
+        col for col in df.columns
+        if any(keyword in col.lower() for keyword in identifier_keywords)
+    ]
+
+    # ------------------------------------------------------------
+    # STEP 2: Select only valid numeric columns
+    # ------------------------------------------------------------
+
+    numeric_cols = [
+        col
+        for col in df.select_dtypes(include=[np.number]).columns
+        if col not in identifier_cols
+    ]
+
+    # ------------------------------------------------------------
+    # STEP 3: Detect outliers
+    # ------------------------------------------------------------
 
     for col in numeric_cols:
+
         series = df[col].dropna()
+
         if len(series) < 5:
             continue
 
         q1 = series.quantile(0.25)
         q3 = series.quantile(0.75)
+
         iqr = q3 - q1
 
         if iqr == 0:
@@ -137,33 +175,43 @@ def detect_outliers_iqr(df: pd.DataFrame) -> Tuple[List[QualityIssue], int, dict
         lower_bound = q1 - 1.5 * iqr
         upper_bound = q3 + 1.5 * iqr
 
-        outliers_mask = (series < lower_bound) | (series > upper_bound)
-        outlier_count = int(outliers_mask.sum())
+        outlier_mask = (series < lower_bound) | (series > upper_bound)
+
+        outlier_count = int(outlier_mask.sum())
+
         outliers_per_col[str(col)] = outlier_count
 
-        if outlier_count > 0:
-            total_outliers += outlier_count
-            outlier_pct = round((outlier_count / total_rows * 100), 2)
+        if outlier_count == 0:
+            continue
 
-            if outlier_pct > 15:
-                severity = "high"
-            elif outlier_pct > 5:
-                severity = "medium"
-            else:
-                severity = "low"
+        total_outliers += outlier_count
 
-            issues.append(QualityIssue(
+        outlier_pct = round((outlier_count / total_rows) * 100, 2)
+
+        if outlier_pct > 15:
+            severity = "high"
+        elif outlier_pct > 5:
+            severity = "medium"
+        else:
+            severity = "low"
+
+        issues.append(
+            QualityIssue(
                 category="outliers",
                 severity=severity,
                 column=str(col),
                 title=f"Statistical Outliers in '{col}'",
-                description=f"Column '{col}' contains {outlier_count} IQR outlier(s) ({outlier_pct}% of rows). Bounds: [{round(lower_bound, 2)}, {round(upper_bound, 2)}].",
+                description=(
+                    f"Column '{col}' contains {outlier_count} "
+                    f"IQR outlier(s) ({outlier_pct}% of rows). "
+                    f"Bounds: [{round(lower_bound,2)}, {round(upper_bound,2)}]."
+                ),
                 affected_count=outlier_count,
                 affected_percentage=outlier_pct
-            ))
+            )
+        )
 
     return issues, total_outliers, outliers_per_col
-
 
 def build_dataset_summary(df: pd.DataFrame, dup_count: int, dup_pct: float, total_outliers: int, outliers_per_col: dict) -> DatasetSummary:
     total_rows, total_cols = df.shape

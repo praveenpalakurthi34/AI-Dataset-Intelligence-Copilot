@@ -11,7 +11,7 @@ def load_csv_dataset(file_path: Path) -> Tuple[pd.DataFrame, str]:
     
     for encoding in encodings_to_try:
         try:
-            df = pd.read_csv(file_path, encoding=encoding)
+            df = pd.read_csv(file_path, encoding=encoding, keep_default_na=False, na_values=[''])
             return df, encoding
         except (UnicodeDecodeError, pd.errors.ParserError):
             continue

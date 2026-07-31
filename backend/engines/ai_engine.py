@@ -1,134 +1,243 @@
 import json
 import re
-from google import genai
+
+from openai import OpenAI
+
 from backend.config import settings
 from backend.schemas.audit import AuditReport
 from backend.schemas.ai import AIAnalysisResponse, Recommendation
-from backend.engines.prompts import build_gemini_prompt
+from backend.engines.prompts import build_ai_prompt
+
 
 def run_ai_reasoning_service(report: AuditReport) -> AIAnalysisResponse:
     """
-    Executes AI Reasoning Service on AuditReport JSON using Gemini 2.5 Flash.
-    Gemini NEVER receives raw CSV.
-    If GEMINI_API_KEY is not set, returns deterministic fallback reasoning.
-    """
-    prompt = build_gemini_prompt(report)
+    Executes AI reasoning using Featherless AI.
 
-    if settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip():
+    IMPORTANT:
+    - The raw CSV is NEVER sent.
+    - Only the AuditReport JSON is sent.
+    - Falls back to deterministic reasoning if API fails.
+    """
+
+    prompt = build_ai_prompt(report)
+
+    if settings.FEATHERLESS_API_KEY.strip():
+
         try:
-            client = genai.Client(api_key=settings.GEMINI_API_KEY.strip())
-            response = client.models.generate_content(
-                model=settings.GEMINI_MODEL,
-                contents=prompt,
+
+            client = OpenAI(
+                api_key=settings.FEATHERLESS_API_KEY.strip(),
+                base_url=settings.FEATHERLESS_BASE_URL
             )
 
-            response_text = response.text.strip()
-            
-            # Clean markdown codeblocks if wrapped in ```json ... ```
-            clean_json_str = re.sub(r"^```(json)?", "", response_text, flags=re.MULTILINE)
-            clean_json_str = re.sub(r"```$", "", clean_json_str, flags=re.MULTILINE).strip()
+            response = client.chat.completions.create(
+                model=settings.FEATHERLESS_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content":
+                        (
+                            "You are an expert AI Data Quality Engineer. "
+                            "Always return ONLY valid JSON."
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.2,
+            )
 
-            parsed = json.loads(clean_json_str)
+            response_text = response.choices[0].message.content.strip()
+
+            # Remove markdown wrappers if model returns ```json
+            clean_json = re.sub(
+                r"^```(?:json)?",
+                "",
+                response_text,
+                flags=re.MULTILINE,
+            )
+
+            clean_json = re.sub(
+                r"```$",
+                "",
+                clean_json,
+                flags=re.MULTILINE,
+            ).strip()
+
+            parsed = json.loads(clean_json)
+
             return AIAnalysisResponse(**parsed)
 
         except Exception as e:
-            print(f"[Gemini API Call Exception]: {e}. Falling back to deterministic reasoning.")
 
-    # Deterministic Rule-Based Fallback Reasoning
+            print(
+                f"[Featherless Exception] {e}"
+            )
+
+            print(
+                "Falling back to deterministic reasoning..."
+            )
+
     return _generate_fallback_ai_response(report)
 
 
-def _generate_fallback_ai_response(report: AuditReport) -> AIAnalysisResponse:
+def _generate_fallback_ai_response(
+    report: AuditReport,
+) -> AIAnalysisResponse:
+
     score = report.readiness_score.overall_score
+
     issues = report.issues
+
     dataset_id = report.dataset_id
 
     health_summary = (
-        f"Dataset '{report.filename}' has a Readiness Score of {score}/100 (Grade {report.readiness_score.grade}). "
-        f"A total of {len(issues)} data quality issue(s) were identified across {report.summary.total_columns} columns."
+        f"Dataset '{report.filename}' has a "
+        f"Readiness Score of "
+        f"{score}/100 "
+        f"(Grade {report.readiness_score.grade}). "
+        f"{len(issues)} quality issue(s) "
+        f"were detected."
     )
 
-    explanation_parts = [
-        f"The dataset consists of {report.summary.total_rows} rows and {report.summary.total_columns} columns.",
-        f"Missing cells account for {report.summary.total_missing_pct}% of total cells.",
-        f"Exact duplicate rows represent {report.summary.total_duplicate_pct}% of the dataset.",
-        f"A total of {report.summary.total_outliers} statistical IQR outliers were detected."
-    ]
-    explanation = " ".join(explanation_parts)
+    explanation = (
+        f"The dataset contains "
+        f"{report.summary.total_rows} rows and "
+        f"{report.summary.total_columns} columns. "
+        f"Missing values account for "
+        f"{report.summary.total_missing_pct}% "
+        f"of all cells. "
+        f"Duplicate rows account for "
+        f"{report.summary.total_duplicate_pct}% "
+        f"of the dataset. "
+        f"A total of "
+        f"{report.summary.total_outliers} "
+        f"IQR outliers were detected."
+    )
 
     recommendations = []
-    code_lines = [
+
+    code = [
         "import pandas as pd",
         "import numpy as np",
         "",
-        "# 1. Load dataset",
         f"df = pd.read_csv('{report.filename}')",
         "df_clean = df.copy()",
-        ""
+        "",
     ]
 
-    rec_counter = 1
+    rec = 1
+
+    # -----------------------------------------------------
+    # Duplicate Rows
+    # -----------------------------------------------------
+
     if report.summary.total_duplicate_rows > 0:
-        recommendations.append(Recommendation(
-            id=f"rec_{rec_counter}",
-            category="duplicate_rows",
-            title="Deduplicate Row Records",
-            impact="Reduces model overfitting and removes redundant data points.",
-            suggested_action="Apply `df.drop_duplicates(inplace=True)`.",
-            priority="high"
-        ))
-        code_lines.append("# Drop duplicate rows")
-        code_lines.append("df_clean.drop_duplicates(inplace=True)")
-        code_lines.append("")
-        rec_counter += 1
+
+        recommendations.append(
+            Recommendation(
+                id=f"rec_{rec}",
+                category="duplicate_rows",
+                title="Remove duplicate rows",
+                impact="Prevents duplicate learning samples.",
+                suggested_action="Use df.drop_duplicates().",
+                priority="high",
+            )
+        )
+
+        code.extend(
+            [
+                "# Remove duplicates",
+                "df_clean.drop_duplicates(inplace=True)",
+                "",
+            ]
+        )
+
+        rec += 1
+
+    # -----------------------------------------------------
+    # Missing Values
+    # -----------------------------------------------------
 
     if report.summary.total_missing_cells > 0:
-        recommendations.append(Recommendation(
-            id=f"rec_{rec_counter}",
-            category="missing_values",
-            title="Impute or Drop Missing Values",
-            impact="Prevents missing value errors during model training.",
-            suggested_action="Impute numeric columns with median, categorical columns with mode or 'Missing'.",
-            priority="high"
-        ))
-        code_lines.append("# Fill missing values for numerical and categorical columns")
-        code_lines.append("for col in df_clean.columns:")
-        code_lines.append("    if df_clean[col].dtype in ['int64', 'float64']:")
-        code_lines.append("        df_clean[col].fillna(df_clean[col].median(), inplace=True)")
-        code_lines.append("    else:")
-        code_lines.append("        df_clean[col].fillna('Missing', inplace=True)")
-        code_lines.append("")
-        rec_counter += 1
+
+        recommendations.append(
+            Recommendation(
+                id=f"rec_{rec}",
+                category="missing_values",
+                title="Handle missing values",
+                impact="Improves ML model quality.",
+                suggested_action="Median for numeric, mode for categorical.",
+                priority="high",
+            )
+        )
+
+        code.extend(
+            [
+                "# Fill missing values",
+                "for col in df_clean.columns:",
+                "    if df_clean[col].dtype in ['int64','float64']:",
+                "        df_clean[col] = df_clean[col].fillna(df_clean[col].median())",
+                "    else:",
+                "        mode = df_clean[col].mode()",
+                "        if len(mode):",
+                "            df_clean[col] = df_clean[col].fillna(mode[0])",
+                "",
+            ]
+        )
+
+        rec += 1
+
+    # -----------------------------------------------------
+    # Outliers
+    # -----------------------------------------------------
 
     if report.summary.total_outliers > 0:
-        recommendations.append(Recommendation(
-            id=f"rec_{rec_counter}",
-            category="outliers",
-            title="Cap Statistical Outliers using IQR Bounds",
-            impact="Prevents skewed gradient updates and extreme loss values.",
-            suggested_action="Apply IQR capping (winsorization) to numerical features.",
-            priority="medium"
-        ))
-        code_lines.append("# Cap numerical outliers using IQR method")
-        code_lines.append("num_cols = df_clean.select_dtypes(include=[np.number]).columns")
-        code_lines.append("for col in num_cols:")
-        code_lines.append("    q1 = df_clean[col].quantile(0.25)")
-        code_lines.append("    q3 = df_clean[col].quantile(0.75)")
-        code_lines.append("    iqr = q3 - q1")
-        code_lines.append("    lower_bound = q1 - 1.5 * iqr")
-        code_lines.append("    upper_bound = q3 + 1.5 * iqr")
-        code_lines.append("    df_clean[col] = np.clip(df_clean[col], lower_bound, upper_bound)")
-        code_lines.append("")
-        rec_counter += 1
 
-    code_lines.append("# Save cleaned dataset")
-    code_lines.append(f"df_clean.to_csv('cleaned_{report.filename}', index=False)")
-    code_lines.append("print('Dataset cleaning completed successfully!')")
+        recommendations.append(
+            Recommendation(
+                id=f"rec_{rec}",
+                category="outliers",
+                title="Cap outliers using IQR",
+                impact="Reduces effect of extreme values.",
+                suggested_action="Apply IQR Winsorization.",
+                priority="medium",
+            )
+        )
+
+        code.extend(
+            [
+                "# IQR Outlier Capping",
+                "num_cols = df_clean.select_dtypes(include=[np.number]).columns",
+                "",
+                "for col in num_cols:",
+                "    q1 = df_clean[col].quantile(0.25)",
+                "    q3 = df_clean[col].quantile(0.75)",
+                "    iqr = q3 - q1",
+                "    lower = q1 - 1.5 * iqr",
+                "    upper = q3 + 1.5 * iqr",
+                "    df_clean[col] = np.clip(df_clean[col], lower, upper)",
+                "",
+            ]
+        )
+
+        rec += 1
+
+    code.extend(
+        [
+            "# Save cleaned dataset",
+            f"df_clean.to_csv('cleaned_{report.filename}', index=False)",
+            "",
+            "print('Cleaning completed successfully.')",
+        ]
+    )
 
     return AIAnalysisResponse(
         dataset_id=dataset_id,
         health_summary=health_summary,
         explanation=explanation,
         recommendations=recommendations,
-        python_code="\n".join(code_lines)
+        python_code="\n".join(code),
     )
