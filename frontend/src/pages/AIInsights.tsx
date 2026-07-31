@@ -2,9 +2,17 @@ import React, { useState } from 'react';
 import { Sparkles, Code, CheckCircle2, Copy, AlertTriangle, Loader2 } from 'lucide-react';
 import { api } from '../services/api';
 import type { AIAnalysisResponse } from '../types';
+import {
+  autoFixDataset,
+  downloadCleanedDataset,
+} from "../services/autofix";
+import DecisionCard from "../components/DecisionCard";
+
+
 
 export const AIInsights: React.FC = () => {
   const [loading, setLoading] = useState(false);
+  const [autoFixLoading, setAutoFixLoading] = useState(false);
   const [aiData, setAiData] = useState<AIAnalysisResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -30,6 +38,29 @@ export const AIInsights: React.FC = () => {
     }
   };
 
+  const handleAutoFix = async () => {
+  const datasetId = localStorage.getItem("current_dataset_id");
+
+  if (!datasetId) {
+    setError("Please upload and analyze a dataset first.");
+    return;
+  }
+
+  try {
+    setAutoFixLoading(true);
+
+    const result = await autoFixDataset(datasetId);
+
+    downloadCleanedDataset(result.download_file);
+
+    alert(result.message);
+
+  } catch (err: any) {
+    setError(err.message || "Auto Fix failed.");
+  } finally {
+    setAutoFixLoading(false);
+  }
+};
   const handleCopyCode = () => {
     if (aiData?.python_code) {
       navigator.clipboard.writeText(aiData.python_code);
@@ -44,28 +75,52 @@ export const AIInsights: React.FC = () => {
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-400 text-xs font-semibold mb-2">
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Gemini 2.5 Flash Reasoning Engine</span>
+            <span>AI Decision Engine</span>
           </div>
           <h1 className="text-3xl font-extrabold text-white">AI Insights & Preprocessing Code</h1>
         </div>
 
-        <button
-          onClick={handleGenerateAI}
-          disabled={loading}
-          className="px-6 py-3 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold text-sm shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2 transition-all hover:scale-105"
-        >
-          {loading ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Analyzing with Gemini...</span>
-            </>
-          ) : (
-            <>
-              <Sparkles className="w-4 h-4" />
-              <span>{aiData ? 'Regenerate Insights' : 'Generate AI Reasoning'}</span>
-            </>
-          )}
-        </button>
+        <div className="flex gap-3">
+
+  {/* Generate AI Button */}
+  <button
+    onClick={handleGenerateAI}
+    disabled={loading}
+    className="px-6 py-3 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold text-sm shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2 transition-all hover:scale-105"
+  >
+    {loading ? (
+      <>
+        <Loader2 className="w-4 h-4 animate-spin" />
+        <span>Analyzing...</span>
+      </>
+    ) : (
+      <>
+        <Sparkles className="w-4 h-4" />
+        <span>{aiData ? "Regenerate Insights" : "Generate AI Reasoning"}</span>
+      </>
+    )}
+  </button>
+
+  {/* Auto Fix Button */}
+  <button
+    onClick={handleAutoFix}
+    disabled={autoFixLoading}
+    className="px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white font-bold text-sm shadow-lg flex items-center justify-center gap-2 transition-all hover:scale-105"
+  >
+    {autoFixLoading ? (
+      <>
+        <Loader2 className="w-4 h-4 animate-spin" />
+        <span>Auto Fixing...</span>
+      </>
+    ) : (
+      <>
+        <CheckCircle2 className="w-4 h-4" />
+        <span>Auto Fix Dataset</span>
+      </>
+    )}
+  </button>
+
+</div>
       </div>
 
       {error && (
@@ -90,25 +145,17 @@ export const AIInsights: React.FC = () => {
             </div>
           </div>
 
-          {/* Recommendations Grid */}
+          {/* AI Decisions */}
           <div className="space-y-4">
-            <h3 className="text-xl font-bold text-white">Actionable Cleaning Recommendations</h3>
+            <h3 className="text-xl font-bold text-white">
+              AI Decisions
+            </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {aiData.recommendations.map((rec) => (
-                <div key={rec.id} className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-2 hover:border-slate-700 transition-colors">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-white text-base">{rec.title}</span>
-                    <span className={`px-2.5 py-0.5 rounded text-xs font-bold uppercase ${
-                      rec.priority === 'high' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                    }`}>
-                      {rec.priority} Priority
-                    </span>
-                  </div>
-                  <p className="text-sm text-slate-400"><strong className="text-slate-300">Impact:</strong> {rec.impact}</p>
-                  <p className="text-sm text-indigo-300 bg-indigo-500/10 p-2.5 rounded-lg border border-indigo-500/20">
-                    💡 Action: {rec.suggested_action}
-                  </p>
-                </div>
+              {aiData?.decisions?.map((decision, index) => (
+                <DecisionCard
+                  key={index}
+                  decision={decision}
+                />
               ))}
             </div>
           </div>

@@ -1,7 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.config import settings
-from backend.api import upload, analyze, history, report
+from backend.api import (
+    upload,
+    analyze,
+    history,
+    report,
+    autofix,
+)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -23,6 +29,7 @@ app.include_router(upload.router)
 app.include_router(analyze.router)
 app.include_router(history.router)
 app.include_router(report.router)
+app.include_router(autofix.router)
 
 @app.get("/")
 async def root():

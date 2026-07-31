@@ -84,19 +84,19 @@ export interface AuditReport {
   issues: QualityIssue[];
 }
 
-export interface Recommendation {
-  id: string;
-  category: string;
-  title: string;
-  impact: string;
-  suggested_action: string;
-  priority: 'high' | 'medium' | 'low';
+export interface Decision {
+  decision: string;
+  target: string;
+  confidence: number;
+  reason: string;
+  expected_impact: string;
+  auto_fix: boolean;
 }
 
 export interface AIAnalysisResponse {
   dataset_id: string;
   health_summary: string;
   explanation: string;
-  recommendations: Recommendation[];
+  decisions: Decision[];
   python_code: string;
 }

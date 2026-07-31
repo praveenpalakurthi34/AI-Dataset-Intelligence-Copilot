@@ -5,18 +5,23 @@ from openai import OpenAI
 
 from backend.config import settings
 from backend.schemas.audit import AuditReport
-from backend.schemas.ai import AIAnalysisResponse, Recommendation
+from backend.schemas.ai import (
+    AIAnalysisResponse,
+    Decision,
+)
 from backend.engines.prompts import build_ai_prompt
 
 
-def run_ai_reasoning_service(report: AuditReport) -> AIAnalysisResponse:
+def run_ai_reasoning_service(
+    report: AuditReport,
+) -> AIAnalysisResponse:
     """
     Executes AI reasoning using Featherless AI.
 
-    IMPORTANT:
-    - The raw CSV is NEVER sent.
-    - Only the AuditReport JSON is sent.
-    - Falls back to deterministic reasoning if API fails.
+    The raw CSV is NEVER sent.
+
+    Only the structured audit report is
+    provided to the LLM.
     """
 
     prompt = build_ai_prompt(report)
@@ -27,31 +32,37 @@ def run_ai_reasoning_service(report: AuditReport) -> AIAnalysisResponse:
 
             client = OpenAI(
                 api_key=settings.FEATHERLESS_API_KEY.strip(),
-                base_url=settings.FEATHERLESS_BASE_URL
+                base_url=settings.FEATHERLESS_BASE_URL,
             )
 
             response = client.chat.completions.create(
                 model=settings.FEATHERLESS_MODEL,
+                temperature=0.2,
                 messages=[
                     {
                         "role": "system",
                         "content":
                         (
-                            "You are an expert AI Data Quality Engineer. "
+                            "You are an expert AI "
+                            "Data Quality Decision Engine. "
                             "Always return ONLY valid JSON."
-                        )
+                        ),
                     },
                     {
                         "role": "user",
-                        "content": prompt
-                    }
+                        "content": prompt,
+                    },
                 ],
-                temperature=0.2,
             )
 
-            response_text = response.choices[0].message.content.strip()
+            response_text = (
+                response
+                .choices[0]
+                .message
+                .content
+                .strip()
+            )
 
-            # Remove markdown wrappers if model returns ```json
             clean_json = re.sub(
                 r"^```(?:json)?",
                 "",
@@ -77,7 +88,7 @@ def run_ai_reasoning_service(report: AuditReport) -> AIAnalysisResponse:
             )
 
             print(
-                "Falling back to deterministic reasoning..."
+                "Falling back to deterministic AI..."
             )
 
     return _generate_fallback_ai_response(report)
@@ -87,157 +98,440 @@ def _generate_fallback_ai_response(
     report: AuditReport,
 ) -> AIAnalysisResponse:
 
+    dataset_id = report.dataset_id
+
     score = report.readiness_score.overall_score
+
+    grade = report.readiness_score.grade
 
     issues = report.issues
 
-    dataset_id = report.dataset_id
+    summary = report.summary
 
     health_summary = (
-        f"Dataset '{report.filename}' has a "
-        f"Readiness Score of "
-        f"{score}/100 "
-        f"(Grade {report.readiness_score.grade}). "
-        f"{len(issues)} quality issue(s) "
-        f"were detected."
+        f"Dataset '{report.filename}' "
+        f"received an AI Readiness Score "
+        f"of {score}/100 "
+        f"(Grade {grade}). "
+        f"The audit detected "
+        f"{len(issues)} quality issue(s)."
     )
 
     explanation = (
         f"The dataset contains "
-        f"{report.summary.total_rows} rows and "
-        f"{report.summary.total_columns} columns. "
-        f"Missing values account for "
-        f"{report.summary.total_missing_pct}% "
-        f"of all cells. "
-        f"Duplicate rows account for "
-        f"{report.summary.total_duplicate_pct}% "
-        f"of the dataset. "
-        f"A total of "
-        f"{report.summary.total_outliers} "
-        f"IQR outliers were detected."
+        f"{summary.total_rows} rows and "
+        f"{summary.total_columns} columns. "
+        f"The audit identified "
+        f"{summary.total_missing_cells} missing values, "
+        f"{summary.total_duplicate_rows} duplicate rows, "
+        f"and "
+        f"{summary.total_outliers} statistical outliers."
     )
 
-    recommendations = []
+    decisions = []
 
     code = [
+
         "import pandas as pd",
+
         "import numpy as np",
+
         "",
+
         f"df = pd.read_csv('{report.filename}')",
-        "df_clean = df.copy()",
+
         "",
+
+        "df_clean = df.copy()",
+
+        "",
+
     ]
+        # =====================================================
+    # DUPLICATE ROWS
+    # =====================================================
 
-    rec = 1
+    if summary.total_duplicate_rows > 0:
 
-    # -----------------------------------------------------
-    # Duplicate Rows
-    # -----------------------------------------------------
+        decisions.append(
 
-    if report.summary.total_duplicate_rows > 0:
+            Decision(
 
-        recommendations.append(
-            Recommendation(
-                id=f"rec_{rec}",
-                category="duplicate_rows",
-                title="Remove duplicate rows",
-                impact="Prevents duplicate learning samples.",
-                suggested_action="Use df.drop_duplicates().",
-                priority="high",
+                decision="Remove Duplicate Rows",
+
+                target="Entire Dataset",
+
+                confidence=99,
+
+                reason=(
+                    f"{summary.total_duplicate_rows} duplicate "
+                    "rows were detected."
+                ),
+
+                expected_impact=(
+                    "Removes redundant records and improves "
+                    "dataset consistency."
+                ),
+
+                auto_fix=True,
+
             )
+
         )
 
         code.extend(
             [
-                "# Remove duplicates",
+
+                "# --------------------------------",
+
+                "# Remove duplicate rows",
+
+                "# --------------------------------",
+
                 "df_clean.drop_duplicates(inplace=True)",
+
                 "",
+
             ]
         )
 
-        rec += 1
+    # =====================================================
+    # MISSING VALUES
+    # =====================================================
 
-    # -----------------------------------------------------
-    # Missing Values
-    # -----------------------------------------------------
+    if summary.total_missing_cells > 0:
 
-    if report.summary.total_missing_cells > 0:
+        decisions.append(
 
-        recommendations.append(
-            Recommendation(
-                id=f"rec_{rec}",
-                category="missing_values",
-                title="Handle missing values",
-                impact="Improves ML model quality.",
-                suggested_action="Median for numeric, mode for categorical.",
-                priority="high",
+            Decision(
+
+                decision="Fill Missing Values",
+
+                target="Columns containing null values",
+
+                confidence=97,
+
+                reason=(
+                    f"{summary.total_missing_cells} missing "
+                    "values were detected."
+                ),
+
+                expected_impact=(
+                    "Improves completeness and prevents loss "
+                    "of training information."
+                ),
+
+                auto_fix=True,
+
             )
+
         )
 
         code.extend(
             [
-                "# Fill missing values",
+
+                "# --------------------------------",
+
+                "# Fill Missing Values",
+
+                "# --------------------------------",
+
                 "for col in df_clean.columns:",
-                "    if df_clean[col].dtype in ['int64','float64']:",
-                "        df_clean[col] = df_clean[col].fillna(df_clean[col].median())",
-                "    else:",
-                "        mode = df_clean[col].mode()",
-                "        if len(mode):",
-                "            df_clean[col] = df_clean[col].fillna(mode[0])",
+
+                "    if df_clean[col].isnull().sum() == 0:",
+
+                "        continue",
+
                 "",
+
+                "    if pd.api.types.is_numeric_dtype(df_clean[col]):",
+
+                "        df_clean[col] = df_clean[col].fillna(",
+
+                "            df_clean[col].median()",
+
+                "        )",
+
+                "",
+
+                "    else:",
+
+                "        mode = df_clean[col].mode()",
+
+                "",
+
+                "        if len(mode):",
+
+                "            df_clean[col] = df_clean[col].fillna(",
+
+                "                mode.iloc[0]",
+
+                "            )",
+
+                "",
+
             ]
         )
+            # =====================================================
+    # OUTLIERS
+    # =====================================================
 
-        rec += 1
+    if summary.total_outliers > 0:
 
-    # -----------------------------------------------------
-    # Outliers
-    # -----------------------------------------------------
+        decisions.append(
 
-    if report.summary.total_outliers > 0:
+            Decision(
 
-        recommendations.append(
-            Recommendation(
-                id=f"rec_{rec}",
-                category="outliers",
-                title="Cap outliers using IQR",
-                impact="Reduces effect of extreme values.",
-                suggested_action="Apply IQR Winsorization.",
-                priority="medium",
+                decision="Cap Outliers",
+
+                target="Numeric Columns",
+
+                confidence=95,
+
+                reason=(
+                    f"{summary.total_outliers} statistical "
+                    "outliers were detected using the "
+                    "IQR method."
+                ),
+
+                expected_impact=(
+                    "Reduces the influence of extreme values "
+                    "while preserving most observations."
+                ),
+
+                auto_fix=True,
+
             )
+
         )
 
         code.extend(
             [
-                "# IQR Outlier Capping",
-                "num_cols = df_clean.select_dtypes(include=[np.number]).columns",
+
+                "# --------------------------------",
+
+                "# Cap Outliers using IQR",
+
+                "# --------------------------------",
+
+                "numeric_columns = df_clean.select_dtypes(",
+
+                "    include=[np.number]",
+
+                ").columns",
+
                 "",
-                "for col in num_cols:",
+
+                "for col in numeric_columns:",
+
                 "    q1 = df_clean[col].quantile(0.25)",
+
                 "    q3 = df_clean[col].quantile(0.75)",
+
                 "    iqr = q3 - q1",
-                "    lower = q1 - 1.5 * iqr",
-                "    upper = q3 + 1.5 * iqr",
-                "    df_clean[col] = np.clip(df_clean[col], lower, upper)",
+
                 "",
+
+                "    if iqr == 0:",
+
+                "        continue",
+
+                "",
+
+                "    lower = q1 - 1.5 * iqr",
+
+                "    upper = q3 + 1.5 * iqr",
+
+                "",
+
+                "    df_clean[col] = np.clip(",
+
+                "        df_clean[col],",
+
+                "        lower,",
+
+                "        upper",
+
+                "    )",
+
+                "",
+
             ]
         )
 
-        rec += 1
+    # =====================================================
+    # DATA TYPE CORRECTION
+    # =====================================================
+
+    decisions.append(
+
+        Decision(
+
+            decision="Correct Data Types",
+
+            target="Automatically Detectable Columns",
+
+            confidence=90,
+
+            reason=(
+                "Ensure numeric and datetime columns use "
+                "appropriate data types whenever possible."
+            ),
+
+            expected_impact=(
+                "Improves downstream analytics and model "
+                "training."
+            ),
+
+            auto_fix=True,
+
+        )
+
+    )
 
     code.extend(
         [
-            "# Save cleaned dataset",
-            f"df_clean.to_csv('cleaned_{report.filename}', index=False)",
+
+            "# --------------------------------",
+
+            "# Attempt datatype correction",
+
+            "# --------------------------------",
+
+            "for col in df_clean.columns:",
+
+            "    if df_clean[col].dtype == object:",
+
+            "        try:",
+
+            "            df_clean[col] = pd.to_numeric(",
+
+            "                df_clean[col]",
+
+            "            )",
+
+            "        except Exception:",
+
+            "            pass",
+
             "",
-            "print('Cleaning completed successfully.')",
+
         ]
     )
 
+    # =====================================================
+    # CONSTANT COLUMNS
+    # =====================================================
+
+    decisions.append(
+
+        Decision(
+
+            decision="Review Constant Columns",
+
+            target="Columns with a single unique value",
+
+            confidence=88,
+
+            reason=(
+                "Constant features contribute little or no "
+                "predictive value."
+            ),
+
+            expected_impact=(
+                "Removing constant columns can simplify "
+                "the dataset."
+            ),
+
+            auto_fix=False,
+
+        )
+
+    )
+        # =====================================================
+    # SAVE CLEANED DATASET
+    # =====================================================
+
+    code.extend(
+        [
+
+            "# --------------------------------",
+
+            "# Save cleaned dataset",
+
+            "# --------------------------------",
+
+            "output_file = 'cleaned_dataset.csv'",
+
+            "",
+
+            "df_clean.to_csv(",
+
+            "    output_file,",
+
+            "    index=False",
+
+            ")",
+
+            "",
+
+            "print(",
+
+            "    f'Cleaned dataset saved to: {output_file}'",
+
+            ")",
+
+            "",
+
+        ]
+    )
+
+    # =====================================================
+    # FALLBACK DECISION
+    # =====================================================
+
+    if len(decisions) == 0:
+
+        decisions.append(
+
+            Decision(
+
+                decision="No Action Required",
+
+                target="Dataset",
+
+                confidence=100,
+
+                reason=(
+                    "The audit did not identify any major "
+                    "data quality issues."
+                ),
+
+                expected_impact=(
+                    "Dataset is already suitable for "
+                    "analysis and machine learning."
+                ),
+
+                auto_fix=False,
+
+            )
+
+        )
+
+    # =====================================================
+    # RETURN RESPONSE
+    # =====================================================
+
     return AIAnalysisResponse(
+
         dataset_id=dataset_id,
+
         health_summary=health_summary,
+
         explanation=explanation,
-        recommendations=recommendations,
+
+        decisions=decisions,
+
         python_code="\n".join(code),
+
     )

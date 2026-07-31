@@ -4,61 +4,69 @@ from backend.schemas.audit import AuditReport
 
 def build_ai_prompt(report: AuditReport) -> str:
     """
-    Constructs a structured prompt for Featherless AI.
+    Builds the prompt for the AI Decision Engine.
 
-    IMPORTANT:
-    - Only the structured AuditReport JSON is sent.
-    - The raw CSV is NEVER sent to the LLM.
+    IMPORTANT
+    ---------
+    • Only the structured AuditReport JSON is sent.
+    • The raw CSV is NEVER sent to the LLM.
+    • The AI must return Decisions instead of Recommendations.
     """
 
     report_dict = report.model_dump()
 
     prompt = f"""
-You are a Senior AI Data Quality Engineer, Machine Learning Engineer, and Data Governance Expert.
-
-Your task is to analyze ONLY the provided dataset audit report.
+You are an expert AI Data Quality Copilot responsible for making autonomous
+data quality decisions.
 
 The dataset itself is NOT available.
-DO NOT assume any information outside the supplied JSON.
+
+You ONLY receive the structured audit report below.
+
+Never assume information that is not explicitly present.
 
 ==================================================
-OBJECTIVES
+YOUR RESPONSIBILITIES
 ==================================================
 
-1. Evaluate the overall health of the dataset.
+1. Evaluate overall dataset health.
 
-2. Explain the major data quality issues.
+2. Explain the detected data quality issues.
 
-3. Recommend practical data-cleaning actions.
+3. Make AI Decisions.
 
-4. Generate an executable Pandas cleaning script.
+4. Decide whether each issue can be Auto Fixed.
+
+5. Generate executable Pandas cleaning code.
 
 ==================================================
 STRICT RULES
 ==================================================
 
-• Base every statement ONLY on the supplied JSON.
+• Use ONLY the supplied audit report.
 
 • Never invent statistics.
 
-• Never fabricate columns.
+• Never invent columns.
 
-• Never reference information not present.
+• Never reference unavailable information.
+
+• Never hallucinate.
 
 • Return ONLY valid JSON.
 
-• Do NOT wrap the response inside markdown.
+• Do NOT use markdown.
 
-• Do NOT use ```json.
+• Do NOT wrap the response inside ```json.
 
 ==================================================
-AUDIT REPORT JSON
+AUDIT REPORT
 ==================================================
 
 {json.dumps(report_dict, indent=2)}
 
 ==================================================
-OUTPUT JSON SCHEMA
+OUTPUT JSON FORMAT
 ==================================================
 
 {{
@@ -66,22 +74,24 @@ OUTPUT JSON SCHEMA
 
   "health_summary": "2-3 sentence executive summary.",
 
-  "explanation": "Detailed explanation of the detected quality issues and their impact on analytics and ML.",
+  "explanation": "Detailed explanation of the detected issues.",
 
-  "recommendations":
+  "decisions":
   [
     {{
-      "id": "rec_1",
+      "decision": "Fill Missing Values",
 
-      "category": "missing_values",
+      "target": "Severity",
 
-      "title": "Recommendation title",
+      "confidence": 98,
 
-      "impact": "Business/ML impact.",
+      "reason":
+      "Explain why this decision was made.",
 
-      "suggested_action": "Specific Pandas cleaning action.",
+      "expected_impact":
+      "Explain how this improves data quality.",
 
-      "priority": "high"
+      "auto_fix": true
     }}
   ],
 
@@ -89,54 +99,136 @@ OUTPUT JSON SCHEMA
 "import pandas as pd
 import numpy as np
 
-# Load dataset
 df = pd.read_csv('<filename>')
 
-# Cleaning code
+# cleaning code
 
 df.to_csv('cleaned_dataset.csv', index=False)"
 }}
 
 ==================================================
-REQUIREMENTS FOR RECOMMENDATIONS
+AI DECISION GUIDELINES
 ==================================================
 
-Each recommendation should:
+For every major issue detected,
+generate ONE decision.
 
-• Clearly identify the issue.
+Examples:
 
-• Explain why it matters.
+Missing values
+→ Fill Missing Values
 
-• Suggest one practical cleaning method.
+Duplicate rows
+→ Remove Duplicate Rows
 
-• Assign a priority:
-    - high
-    - medium
-    - low
+Outliers
+→ Cap Outliers
+
+Datatype inconsistency
+→ Correct Data Types
+
+Constant columns
+→ Drop Constant Column
+
+Highly correlated columns
+→ Remove Redundant Feature
 
 ==================================================
-REQUIREMENTS FOR PYTHON CODE
+DECISION REQUIREMENTS
 ==================================================
 
-The generated code should:
+Every decision MUST contain
 
-• Import pandas and numpy.
+• decision
 
-• Read the dataset.
+• target
 
-• Remove duplicate rows.
+• confidence (0-100)
 
-• Handle missing values.
+• reason
 
-• Correct invalid data types when applicable.
+• expected_impact
 
-• Handle outliers using IQR capping.
+• auto_fix
 
-• Save the cleaned dataset.
+Confidence should reflect how certain the decision is.
 
-The code should be executable without modification.
+Example:
+
+95-100
+Very confident
+
+80-94
+Confident
+
+60-79
+Moderately confident
+
+==================================================
+AUTO FIX RULES
+==================================================
+
+Set
+
+"auto_fix": true
+
+ONLY if the issue can be solved automatically.
+
+Examples:
+
+✔ Remove duplicates
+
+✔ Fill missing values
+
+✔ Correct datatypes
+
+✔ Cap outliers
+
+✔ Remove constant columns
+
+Examples that should be false:
+
+✘ Business rule violations
+
+✘ Ambiguous categorical values
+
+✘ Domain-specific corrections
+
+==================================================
+PYTHON CODE REQUIREMENTS
+==================================================
+
+Generate executable Pandas code that:
+
+• imports pandas and numpy
+
+• loads the CSV
+
+• removes duplicate rows
+
+• fills missing values
+
+• corrects datatypes when needed
+
+• caps outliers using the IQR method
+
+• preserves column names
+
+• saves the cleaned dataset as
+
+cleaned_dataset.csv
+
+==================================================
+IMPORTANT
+==================================================
 
 Return ONLY valid JSON.
+
+Do NOT include explanations outside JSON.
+
+Do NOT include markdown.
+
+Do NOT include code fences.
 """
 
     return prompt
