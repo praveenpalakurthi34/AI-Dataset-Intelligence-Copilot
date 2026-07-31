@@ -461,5 +461,3 @@ This project is built using the following open-source technologies:
 - ReportLab
 
 ---
-
-⭐ **If you found this project useful, consider giving it a star on GitHub!**
