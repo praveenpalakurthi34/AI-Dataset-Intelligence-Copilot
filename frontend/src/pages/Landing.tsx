@@ -50,9 +50,9 @@ export const Landing: React.FC = () => {
           <div className="p-3 bg-violet-500/10 border border-violet-500/20 text-violet-400 rounded-xl w-fit">
             <Cpu className="w-6 h-6" />
           </div>
-          <h3 className="text-xl font-bold text-white">Gemini AI Reasoning</h3>
+          <h3 className="text-xl font-bold text-white">AI Decision Engine</h3>
           <p className="text-slate-400 text-sm leading-relaxed">
-            Gemini 2.5 Flash analyzes JSON audit reports (never raw data) to explain quality anomalies and suggest high-impact remediation steps.
+            AI Decision Engine analyzes JSON audit reports (never raw data) to explain quality anomalies and suggest high-impact remediation steps.
           </p>
         </div>
 
@@ -90,7 +90,7 @@ export const Landing: React.FC = () => {
           <div className="space-y-2">
             <div className="w-10 h-10 bg-teal-600 text-white font-bold rounded-full flex items-center justify-center mx-auto shadow-lg shadow-teal-600/30">3</div>
             <h4 className="font-semibold text-white">AI Reasoning</h4>
-            <p className="text-xs text-slate-400">Gemini generates insights</p>
+            <p className="text-xs text-slate-400">AI Decision Engine generates insights</p>
           </div>
 
           <div className="space-y-2">
